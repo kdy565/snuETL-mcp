@@ -1,0 +1,16 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+.cache/
+*.sqlite
+
+# 로컬 런타임 데이터 (저장소·로그·다운로드)
+store/
+downloads/
+
+# macOS
+.DS_Store
+
+# Claude Code 로컬 설정
+.claude/settings.local.json
