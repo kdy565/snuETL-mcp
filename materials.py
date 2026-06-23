@@ -315,7 +315,7 @@ def download_course_files(
     }
 
 
-# --- 정리 (Organize) — readETL 이 받은 파일만 분류 이동 -----------------------
+# --- 정리 (Organize) — snuETL-mcp 이 받은 파일만 분류 이동 -----------------------
 
 # 과제물로 분류할 파일명 패턴 (그 외는 강의록)
 _ASSIGN_PAT = re.compile(
@@ -335,7 +335,7 @@ def organize_course_files(
     mapping: Optional[dict] = None,
     dry_run: bool = False,
 ) -> dict:
-    """readETL 이 받은 강의 파일만 '강의록'/'과제물' 하위 폴더로 분류 이동한다.
+    """snuETL-mcp 이 받은 강의 파일만 '강의록'/'과제물' 하위 폴더로 분류 이동한다.
 
     Canvas 파일 목록으로 대상 경로를 재계산하므로 사용자의 다른 작업물(코드·venv 등)은
     절대 건드리지 않는다. mapping={파일명: 카테고리} 로 LLM 판단 결과를 덮어쓸 수 있다.

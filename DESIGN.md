@@ -1,4 +1,4 @@
-# readETL — MCP 서버 설계
+# snuETL-mcp — MCP 서버 설계
 
 ## 0. 목표
 
@@ -22,7 +22,7 @@
 ## 2. 모듈 구조
 
 ```
-readETL/
+snuETL-mcp/
 ├── .env                     # ETL_BASE_URL, ETL_TOKEN, ETL_ENABLE_WRITE
 ├── server.py                # FastMCP 진입점 — 도구/리소스/프롬프트 등록만
 ├── etl/

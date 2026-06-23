@@ -1,4 +1,4 @@
-# readETL
+# snuETL-mcp
 
 SNU eTL(Canvas LMS)을 MCP 도구로 노출하는 Python MCP 서버. 강의·과제·공지·성적을
 조회하고, 마감일/공지를 로컬에 **누적 저장**하며, 강의 자료를 의예과 폴더 구조에 맞춰
@@ -58,5 +58,5 @@ claude mcp add snu-etl -- /abs/path/.venv/bin/python /abs/path/server.py
 `sync_job.py`를 cron으로 매시 실행하여 공지·마감 변경을 자동 누적한다:
 
 ```
-0 * * * * /abs/.venv/bin/python /abs/sync_job.py >> /abs/store/cron.out 2>&1 # readETL-sync
+0 * * * * /abs/.venv/bin/python /abs/sync_job.py >> /abs/store/cron.out 2>&1 # snuETL-mcp-sync
 ```

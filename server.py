@@ -42,6 +42,28 @@ def list_announcements(course_id: int) -> list[dict]:
 
 
 @mcp.tool()
+def list_discussions(course_id: int) -> list[dict]:
+    """특정 강의(course_id)의 토론 게시판(열린게시판) 글 목록을 반환한다.
+
+    공지(list_announcements)와 별개로, eTL '열린게시판'에 올라오는 글이 여기에 잡힌다.
+    각 글의 제목·작성자·작성일·답글 수를 주며, 본문과 답글 전체는 get_discussion 으로 본다.
+    """
+    return cc.list_discussions(course_id)
+
+
+@mcp.tool()
+def get_discussion(
+    course_id: int, topic_id: int, include_replies: bool = True
+) -> dict:
+    """토론 게시판 글 1건(topic_id)의 본문과 댓글·답글(중첩 포함)을 반환한다.
+
+    topic_id 는 list_discussions 가 돌려준 각 글의 id 다.
+    include_replies=False 면 답글 없이 본문만 빠르게 가져온다.
+    """
+    return cc.get_discussion(course_id, topic_id, include_replies=include_replies)
+
+
+@mcp.tool()
 def get_grades(active_only: bool = True) -> list[dict]:
     """강의별 현재 성적(점수) 요약을 반환한다."""
     return cc.get_grades(active_only=active_only)
@@ -184,7 +206,7 @@ def organize_course_files(
     mapping: dict | None = None,
     dry_run: bool = False,
 ) -> dict:
-    """readETL이 받은 강의 파일을 '강의록'/'과제물' 하위 폴더로 분류 이동한다.
+    """snuETL-mcp이 받은 강의 파일을 '강의록'/'과제물' 하위 폴더로 분류 이동한다.
 
     Canvas 파일 목록으로 대상만 계산하므로 사용자의 다른 작업물은 건드리지 않는다.
     규칙 기반 분류가 애매하면 mapping={파일명: '강의록'|'과제물'}로 덮어쓸 수 있다(LLM 판단).
