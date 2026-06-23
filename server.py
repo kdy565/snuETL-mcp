@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 import canvas_client as cc
 import materials
+import openboard
 import schedule
 import store
 
@@ -64,6 +65,35 @@ def get_discussion(
 
 
 @mcp.tool()
+def list_openboard_posts(
+    course_id: int, page_size: int = 50, page_index: int = 1
+) -> dict:
+    """특정 강의(course_id)의 '열린게시판'(OpenBoard) 글 목록을 본문과 함께 반환한다.
+
+    eTL '열린게시판'은 Canvas 토론이 아니라 LearningX LTI 외부도구라, 일반 공지/토론
+    도구로는 안 잡힌다. 이 도구가 LTI 런치를 거쳐 실제 글을 가져온다(SNU 로그인 불필요).
+    각 글의 댓글(예: 보완 신청 명단)은 get_openboard_post 로 본다.
+    """
+    return openboard.list_openboard_posts(
+        course_id, page_size=page_size, page_index=page_index
+    )
+
+
+@mcp.tool()
+def get_openboard_post(
+    course_id: int, post_id: str, include_comments: bool = True
+) -> dict:
+    """'열린게시판'(OpenBoard) 글 1건(post_id)의 본문과 댓글을 반환한다.
+
+    post_id 는 list_openboard_posts 가 돌려준 각 글의 id 다.
+    댓글에는 작성자·학과가 담겨 보완 신청 명단 등을 그대로 확인할 수 있다.
+    """
+    return openboard.get_openboard_post(
+        course_id, post_id, include_comments=include_comments
+    )
+
+
+@mcp.tool()
 def get_grades(active_only: bool = True) -> list[dict]:
     """강의별 현재 성적(점수) 요약을 반환한다."""
     return cc.get_grades(active_only=active_only)
@@ -83,6 +113,17 @@ def list_modules(course_id: int) -> list[dict]:
     주차별 강의록 정리나 노션/문서 적재의 골격으로 쓴다.
     """
     return cc.list_modules(course_id)
+
+
+@mcp.tool()
+def get_syllabus(course_id: int, fetch_content: bool = True) -> dict:
+    """특정 강의(course_id)의 공식 강의계획서(SNU 수강신청 시스템)를 조회한다.
+
+    eTL '강의계획서' 탭이 띄우는 sugang.snu.ac.kr 공식 강의계획서에서 강의시간·강의실·
+    평가비율(출석/과제/시험 등)·회차별 강의계획·첨부파일과 official_url 을 가져온다.
+    SNU 로그인 없이 조회되며, fetch_content=False 면 링크/메타만 빠르게 반환한다.
+    """
+    return cc.get_syllabus(course_id, fetch_content=fetch_content)
 
 
 @mcp.tool()
@@ -116,6 +157,15 @@ def sync_announcements(course_id: int | None = None, active_only: bool = True) -
 
 
 @mcp.tool()
+def sync_discussions(course_id: int | None = None, active_only: bool = True) -> dict:
+    """열린게시판(토론) 글을 저장소에 누적 반영한다(본문 저장, 수정·새 답글 시 이력 기록).
+
+    course_id 생략 시 활성 강의 전체를 동기화한다.
+    """
+    return store.sync_discussions(course_id=course_id, active_only=active_only)
+
+
+@mcp.tool()
 def sync_assignments(course_id: int | None = None, active_only: bool = True) -> dict:
     """과제를 저장소에 누적 반영한다. 마감일이 바뀌면 변경 이력을 누적 저장한다.
 
@@ -137,6 +187,12 @@ def get_stored_announcements(course_id: int | None = None) -> list[dict]:
 
 
 @mcp.tool()
+def get_stored_discussions(course_id: int | None = None) -> list[dict]:
+    """로컬 저장소의 열린게시판(토론) 글을 최신순으로 반환한다 (API 호출 없이 캐시 조회)."""
+    return store.get_stored_discussions(course_id=course_id)
+
+
+@mcp.tool()
 def get_stored_assignments(course_id: int | None = None) -> list[dict]:
     """로컬 저장소의 과제를 마감일 순으로 반환한다 (API 호출 없이 캐시 조회)."""
     return store.get_stored_assignments(course_id=course_id)
@@ -150,8 +206,8 @@ def get_change_history(
 ) -> list[dict]:
     """변경 이력을 시간순으로 반환한다.
 
-    entity_type: 'course' | 'announcement' | 'assignment' (생략 시 전체).
-    마감일 변경·공지 수정 등이 누적 기록된다.
+    entity_type: 'course' | 'announcement' | 'discussion' | 'assignment' (생략 시 전체).
+    마감일 변경·공지 수정·게시판 새 글/답글 등이 누적 기록된다.
     """
     return store.get_change_history(
         entity_type=entity_type, course_id=course_id, entity_id=entity_id

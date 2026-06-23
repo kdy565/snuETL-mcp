@@ -24,9 +24,14 @@ _TRACKED = {
     "course": ["name", "workflow_state"],
     "announcement": ["title", "posted_at", "message"],
     "assignment": ["name", "due_at", "lock_at", "unlock_at", "points_possible"],
+    # 열린게시판: 본문 수정뿐 아니라 새 답글(reply_count 증가)도 변경으로 본다
+    "discussion": ["title", "posted_at", "message", "reply_count"],
 }
 # created 이력의 new_value 로 남길 대표 필드
-_HEADLINE = {"course": "workflow_state", "announcement": "posted_at", "assignment": "due_at"}
+_HEADLINE = {
+    "course": "workflow_state", "announcement": "posted_at",
+    "assignment": "due_at", "discussion": "posted_at",
+}
 
 
 # --- 유틸 ---------------------------------------------------------------------
@@ -80,6 +85,12 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY, course_id INTEGER, course_name TEXT,
                 name TEXT, due_at TEXT, lock_at TEXT, unlock_at TEXT,
                 points_possible REAL, submission_types TEXT, html_url TEXT,
+                first_seen TEXT, last_synced TEXT, last_changed TEXT
+            );
+            CREATE TABLE IF NOT EXISTS discussions (
+                id INTEGER PRIMARY KEY, course_id INTEGER, course_name TEXT,
+                title TEXT, posted_at TEXT, last_reply_at TEXT, author TEXT,
+                message TEXT, reply_count INTEGER, url TEXT,
                 first_seen TEXT, last_synced TEXT, last_changed TEXT
             );
             CREATE TABLE IF NOT EXISTS change_history (
@@ -189,6 +200,32 @@ def sync_announcements(course_id: Optional[int] = None, active_only: bool = True
     return _summary(counts, courses=len(targets))
 
 
+def sync_discussions(course_id: Optional[int] = None, active_only: bool = True) -> dict:
+    """열린게시판(토론) 글을 저장소에 누적 반영한다.
+
+    본문은 텍스트로 정리해 저장하고, 본문 수정·새 답글(reply_count 증가) 시 이력을 남긴다.
+    eTL 은 only_announcements 를 명시할 때만 토픽을 돌려주므로 False 를 명시한다.
+    """
+    init_db()
+    ts = _now()
+    counts = {"new": 0, "changed": 0, "unchanged": 0}
+    targets = _targets(course_id, active_only)
+    with _conn() as conn:
+        for cid, cname in targets:
+            course = cc.get_canvas().get_course(cid)
+            for d in course.get_discussion_topics(only_announcements=False):
+                t = cc.discussion_to_dict(d)
+                values = {
+                    "id": t["id"], "course_id": cid, "course_name": cname,
+                    "title": t["title"], "posted_at": t["posted_at"],
+                    "last_reply_at": t["last_reply_at"], "author": t["author"],
+                    "message": _html_to_text(t["message"]),
+                    "reply_count": t["reply_count"], "url": t["html_url"],
+                }
+                counts[_upsert(conn, "discussions", "discussion", values, "title", ts)] += 1
+    return _summary(counts, courses=len(targets))
+
+
 def sync_assignments(course_id: Optional[int] = None, active_only: bool = True) -> dict:
     """과제를 저장소에 누적 반영한다(마감일 변경 시 이력 기록)."""
     init_db()
@@ -216,6 +253,7 @@ def sync_all(active_only: bool = True) -> dict:
     return {
         "courses": sync_courses(active_only=active_only),
         "announcements": sync_announcements(active_only=active_only),
+        "discussions": sync_discussions(active_only=active_only),
         "assignments": sync_assignments(active_only=active_only),
     }
 
@@ -243,6 +281,10 @@ def get_stored_announcements(course_id: Optional[int] = None) -> list[dict]:
     return _query("announcements", course_id, "posted_at DESC")
 
 
+def get_stored_discussions(course_id: Optional[int] = None) -> list[dict]:
+    return _query("discussions", course_id, "posted_at DESC")
+
+
 def get_stored_assignments(course_id: Optional[int] = None) -> list[dict]:
     return _query("assignments", course_id, "(due_at IS NULL), due_at")
 
@@ -252,7 +294,10 @@ def get_change_history(
     course_id: Optional[int] = None,
     entity_id: Optional[int] = None,
 ) -> list[dict]:
-    """변경 이력(마감일/공지 수정 등)을 시간순으로 반환한다."""
+    """변경 이력(마감일/공지·게시판 수정 등)을 시간순으로 반환한다.
+
+    entity_type: 'course' | 'announcement' | 'discussion' | 'assignment' (생략 시 전체).
+    """
     init_db()
     q = "SELECT * FROM change_history"
     conds, params = [], []

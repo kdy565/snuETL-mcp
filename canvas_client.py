@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -230,6 +231,118 @@ def get_discussion(
 def list_files(course_id: int) -> list[dict]:
     course = get_canvas().get_course(course_id)
     return [file_to_dict(f) for f in course.get_files()]
+
+
+# eTL '강의계획서' 탭은 sugang.snu.ac.kr 공식 강의계획서를 iframe 으로 띄운다.
+# 그 iframe URL(cc103.action) 에 과목코드·학기·분반이 들어 있고, 실제 내용은
+# cc103ajax.action 이 JSON 으로 돌려준다(SSO 불필요, Referer 헤더만 필요).
+_SUGANG = "https://sugang.snu.ac.kr/sugang/cc"
+_SUGANG_SYLLABUS_RE = re.compile(
+    r"https?://sugang\.snu\.ac\.kr/sugang/cc/cc103\.action\?[^\s\"'<>]+"
+)
+# 평가비율 키 -> 한글 라벨
+_MRKS_LABELS = {
+    "attendance": "출석", "homeWork": "과제", "mid": "중간고사",
+    "final": "기말고사", "quiz": "퀴즈", "attitude": "태도", "etc": "기타",
+}
+
+
+def _strip_html(s: str | None) -> str | None:
+    """<br> 은 줄바꿈으로, 나머지 태그는 제거해 평문으로 만든다."""
+    if not s:
+        return None
+    import html as _h
+    t = re.sub(r"<br\s*/?>", "\n", s, flags=re.I)
+    t = re.sub(r"<[^>]+>", "", t)
+    t = _h.unescape(t)
+    return re.sub(r"\n{3,}", "\n\n", t).strip() or None
+
+
+def _fetch_sugang_syllabus(params: dict) -> dict | None:
+    """cc103ajax.action 에서 강의계획서 본문(JSON)을 받아 정리해 반환한다.
+
+    Referer 헤더가 없으면 sugang 이 직접접근으로 보고 빈 페이지를 주므로 꼭 넣는다.
+    실패 시 None 을 반환(링크만 제공으로 폴백).
+    """
+    import requests
+    try:
+        s = requests.Session()
+        s.headers.update({
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://sugang.snu.ac.kr/",
+            "X-Requested-With": "XMLHttpRequest",
+        })
+        s.get(f"{_SUGANG}/cc103.action", params=params, timeout=20)  # 세션/Referer 맥락
+        d = s.post(f"{_SUGANG}/cc103ajax.action", data=params, timeout=20).json()
+    except Exception:
+        return None
+
+    plan = (d.get("LISTTAB03_LIST_PLAN") or [{}])[0]
+    mrks = d.get("LISTTAB03_LIST_MRKS") or {}
+    tab1 = d.get("LISTTAB01") or {}
+    tab3 = d.get("LISTTAB03") or {}
+    evaluation = {
+        _MRKS_LABELS[k]: mrks[k]
+        for k in _MRKS_LABELS
+        if isinstance(mrks.get(k), (int, float)) and mrks.get(k)
+    }
+    attachments = [
+        {
+            "name": a.get("korFileNm"),
+            "attach_no": a.get("korAttachNo"),
+        }
+        for a in (d.get("LISTTAB03_LIST_ATTACH") or [])
+        if a.get("korFileNm")
+    ]
+    return {
+        "title": tab1.get("sbjtCdAndNm"),          # 'E11.116 동서양의 종교적 지혜'
+        "department": tab1.get("departmentKorNm"),
+        "grading": tab3.get("mrksRelevalYnNm"),     # 상대평가/절대평가
+        "grade_scale": tab1.get("mrksGvMthd"),      # A~F 등
+        "times": d.get("ltTime"),
+        "rooms": d.get("ltRoom"),
+        "lesson_types": d.get("ltType"),
+        "evaluation": evaluation,                   # {'출석':20,'과제':30,...}
+        "evaluation_total": (d.get("LISTTAB03_SUM_OF_MRKS") or {}).get("sumOfMrks"),
+        "attendance_rule": _strip_html(plan.get("attendRegulKorCtnt")),
+        "ai_policy": _strip_html(tab3.get("genrAiUtlzKorCtnt")),
+        "plan": _strip_html(plan.get("ltPlanCtnt")),  # 회차별 강의계획
+        "attachments": attachments,
+    }
+
+
+def get_syllabus(course_id: int, fetch_content: bool = True) -> dict:
+    """공식 강의계획서(SNU 수강신청 시스템)를 조회한다.
+
+    eTL '강의계획서' 탭의 syllabus_body 에 박힌 cc103.action URL 에서 과목코드·학기·
+    분반을 뽑아, sugang 의 cc103ajax.action 에서 실제 내용(강의시간·평가비율·회차별
+    계획·첨부파일 등)을 JSON 으로 받아 정리해 돌려준다. SNU SSO 로그인은 필요 없다.
+    fetch_content=False 면 본문 없이 링크/메타만 빠르게 반환한다.
+    """
+    course = get_canvas().get_course(course_id, include=["syllabus_body"])
+    body = _get(course, "syllabus_body") or ""
+    m = _SUGANG_SYLLABUS_RE.search(body)
+    url = m.group(0).replace("&amp;", "&").rstrip("&") if m else None
+
+    params: dict[str, str] = {}
+    if url:
+        params = dict(re.findall(r"[?&]([^=&]+)=([^&]*)", url))
+
+    out = {
+        "course_id": course_id,
+        "course_name": _get(course, "name"),
+        "course_code": params.get("sbjtCd"),  # 예: E11.116
+        "lt_no": params.get("ltNo"),          # 분반 (001 등)
+        "year": params.get("openSchyy"),
+        "official_url": url,
+    }
+    if fetch_content and url:
+        content = _fetch_sugang_syllabus(params)
+        if content:
+            out.update(content)
+        else:
+            out["note"] = "본문 조회 실패 — official_url 로 직접 확인하세요."
+    return out
 
 
 def list_modules(course_id: int) -> list[dict]:
