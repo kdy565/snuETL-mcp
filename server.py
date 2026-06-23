@@ -11,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 
 import canvas_client as cc
 import materials
+import schedule
 import store
 
 mcp = FastMCP("snu-etl")
@@ -50,6 +51,16 @@ def get_grades(active_only: bool = True) -> list[dict]:
 def list_files(course_id: int) -> list[dict]:
     """특정 강의(course_id)의 강의자료 파일 목록과 다운로드 URL을 반환한다."""
     return cc.list_files(course_id)
+
+
+@mcp.tool()
+def list_modules(course_id: int) -> list[dict]:
+    """특정 강의(course_id)의 주차/모듈 구조와 각 모듈 항목을 순서대로 반환한다.
+
+    '1주차 모듈' 같은 주차 단위로 파일·과제·외부링크가 묶여 있어,
+    주차별 강의록 정리나 노션/문서 적재의 골격으로 쓴다.
+    """
+    return cc.list_modules(course_id)
 
 
 @mcp.tool()
@@ -134,15 +145,35 @@ def download_course_files(
     dest_dir: str | None = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    skip_video: bool = False,
+    include_ext: list[str] | None = None,
+    exclude_ext: list[str] | None = None,
+    max_size_mb: float | None = None,
+    only_file_ids: list[int] | None = None,
+    exclude_file_ids: list[int] | None = None,
 ) -> dict:
     """강의 자료를 의예과 폴더 구조(<base>/<학기>/<과목명>/)에 맞춰 다운로드한다.
 
     dest_dir 로 base 를 바꿀 수 있다(생략 시 ETL_DOWNLOAD_DIR 또는 의예과 기본 경로).
     이미 있는 과목 폴더는 재사용하고, 같은 크기 파일은 건너뛴다(증분).
-    dry_run=True 면 다운로드 없이 결정된 저장 경로와 파일 수만 반환한다.
+
+    어떤 파일을 받을지 취사선택하는 필터(영상 등 제외에 사용):
+      - skip_video: 영상 확장자(mp4·mov·mkv 등) 제외.
+      - include_ext: 이 확장자만 받음(예 ['pdf','pptx']).
+      - exclude_ext: 이 확장자 제외.
+      - max_size_mb: 이 용량(MB) 초과 파일 제외(대용량 영상 차단).
+      - only_file_ids: 이 파일 id 만 받음(콕 집어 선택; 다른 필터 무시).
+      - exclude_file_ids: 이 파일 id 제외.
+
+    먼저 dry_run=True 로 호출하면 각 파일의 id·크기(MB)·확장자와 현재 필터
+    적용 시 선택 여부(selected)를 목록으로 돌려준다 → 사용자에게 보여주고
+    고르게 한 뒤, only_file_ids 등으로 실제 다운로드하면 된다.
     """
     return materials.download_course_files(
-        course_id, dest_dir=dest_dir, overwrite=overwrite, dry_run=dry_run
+        course_id, dest_dir=dest_dir, overwrite=overwrite, dry_run=dry_run,
+        skip_video=skip_video, include_ext=include_ext, exclude_ext=exclude_ext,
+        max_size_mb=max_size_mb, only_file_ids=only_file_ids,
+        exclude_file_ids=exclude_file_ids,
     )
 
 
@@ -162,6 +193,42 @@ def organize_course_files(
     return materials.organize_course_files(
         course_id, dest_dir=dest_dir, mapping=mapping, dry_run=dry_run
     )
+
+
+# --- 일정 (Schedule) — 목표 1 지원 -------------------------------------------
+
+
+@mcp.tool()
+def get_schedule_events(
+    start: str | None = None,
+    end: str | None = None,
+    kinds: list[str] | None = None,
+    course_id: int | None = None,
+) -> list[dict]:
+    """저장소의 구조화된 마감일(과제 due_at 등)을 공용 일정 스키마로 반환한다.
+
+    start/end: 'YYYY-MM-DD' 또는 ISO8601. due 기준으로 [start, end] 범위만(생략 가능).
+    kinds: 'assignment'|'quiz'|'exam' 중 일부(생략 시 전체).
+    course_id: 지정 시 해당 강의만(생략 시 전체).
+    Canvas 가 날짜를 필드로 가진 것만 다루므로 추측이 아니라 정확한 값이다.
+    공지 본문 속 일정은 extract_events_from_announcements 를 쓴다.
+    먼저 sync_assignments(또는 sync_all)로 저장소를 채워두어야 한다.
+    """
+    return schedule.get_schedule_events(
+        start=start, end=end, kinds=kinds, course_id=course_id
+    )
+
+
+@mcp.tool()
+def extract_events_from_announcements(course_id: int | None = None) -> list[dict]:
+    """공지 본문에서 일정 후보(날짜·시간·키워드+문맥)를 추출해 반환한다(확정 아님).
+
+    정규식으로 'M월 D일'·숫자 날짜·시간·일정 키워드를 가진 줄만 골라 문맥과 함께 준다.
+    상대표현·교시 등 맥락 해석과 최종 확정은 호출하는 LLM 이 한다(needs_confirmation=True).
+    캘린더 적재 전 반드시 사람/LLM 확인을 거치는 것을 전제로 한다.
+    먼저 sync_announcements(또는 sync_all)로 저장소를 채워두어야 한다.
+    """
+    return schedule.extract_events_from_announcements(course_id=course_id)
 
 
 if __name__ == "__main__":

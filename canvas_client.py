@@ -101,6 +101,26 @@ def file_to_dict(f: Any) -> dict:
     }
 
 
+def module_item_to_dict(it: Any) -> dict:
+    return {
+        "id": _get(it, "id"),
+        "title": _get(it, "title"),
+        "type": _get(it, "type"),  # File | ExternalUrl | Assignment | Page | ...
+        "content_id": _get(it, "content_id"),  # File 이면 파일 id
+        "html_url": _get(it, "html_url"),  # eTL 내 링크
+        "external_url": _get(it, "external_url"),  # ExternalUrl 이면 외부 링크
+    }
+
+
+def module_to_dict(m: Any) -> dict:
+    return {
+        "id": m.id,
+        "name": _get(m, "name"),  # 예: '1주차 모듈'
+        "position": _get(m, "position"),
+        "items": [module_item_to_dict(it) for it in m.get_module_items()],
+    }
+
+
 def todo_to_dict(t: Any) -> dict:
     assignment = _get(t, "assignment") or {}
     return {
@@ -138,6 +158,12 @@ def list_announcements(course_id: int) -> list[dict]:
 def list_files(course_id: int) -> list[dict]:
     course = get_canvas().get_course(course_id)
     return [file_to_dict(f) for f in course.get_files()]
+
+
+def list_modules(course_id: int) -> list[dict]:
+    """강의의 주차/모듈 구조와 각 모듈의 항목을 순서대로 반환한다."""
+    course = get_canvas().get_course(course_id)
+    return [module_to_dict(m) for m in course.get_modules()]
 
 
 def get_upcoming() -> list[dict]:

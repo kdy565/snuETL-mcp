@@ -18,7 +18,8 @@ from typing import Optional
 
 import canvas_client as cc
 
-SNU_BASE = "/Users/honsalo3/Documents/서울대학교/의예과"
+# 다운로드 기본 경로 fallback. 실제 경로는 .env 의 ETL_DOWNLOAD_DIR 로 지정한다.
+SNU_BASE = os.path.expanduser(os.environ.get("ETL_DOWNLOAD_DIR", "") or "./downloads")
 
 # eTL 학기코드 -> (사용자 폴더 번호, 라벨). eTL: 1=1학기,2=2학기,3=여름,4=겨울.
 # 사용자 폴더는 시간순 번호: 1학기=1, 여름=2, 2학기=3, 겨울=4.
@@ -29,8 +30,9 @@ _TERM_MAP = {
     4: (4, "겨울계절학기"),
 }
 
-# eTL 강의명(접두/분반 제거 후) -> 사용자 폴더명 별칭. eTL이 영어라 폴더(한글)와
-# 다를 때 매핑한다. 키는 공백 무시·NFC 로 비교한다.
+# eTL 강의명(접두/분반 제거 후) -> 표시용 과목명 별칭(폴더·일정·캘린더 공용).
+# eTL 이 영어이거나 원하는 이름과 다를 때 여기에 추가하면 다운로드 폴더명과
+# 캘린더 이벤트 과목명에 동일하게 적용된다. 키는 공백 무시·NFC 로 비교한다.
 _NAME_ALIASES = {
     "Basics of Deep Learning": "딥러닝의 기초",
     "Introduction to Machine Learning": "기계학습 개론",
@@ -57,6 +59,17 @@ def clean_course_name(name: Optional[str]) -> str:
     return n.strip()
 
 
+def display_course_name(name: Optional[str]) -> str:
+    """표시용 과목명을 일관되게 만든다(폴더·일정·캘린더 공용 단일 진입점).
+
+    학기코드·분반을 떼고(clean_course_name), 영어명 등은 _NAME_ALIASES 로
+    한국어(또는 사전 설정명)로 치환한다. 새 과목명을 통일하려면 _NAME_ALIASES 에
+    한 줄 추가하면 다운로드 폴더와 캘린더 양쪽에 동시에 반영된다.
+    """
+    clean = clean_course_name(name)
+    return {_norm(k): v for k, v in _NAME_ALIASES.items()}.get(_norm(clean), clean)
+
+
 def _term_folder(course_name: str) -> Optional[str]:
     """eTL 강의명 접두(2025-2 등)를 사용자 학기 폴더명으로 변환한다."""
     m = re.match(r"^(\d{4})-(\d+)", course_name or "")
@@ -73,11 +86,7 @@ def resolve_course_dir(course_name: str, base: str) -> tuple[Path, str]:
     base 아래에 같은 과목명 폴더가 이미 있으면 그것을 재사용한다.
     """
     base_p = Path(base).expanduser()
-    clean = clean_course_name(course_name)
-    # 영어명 등 폴더명과 다른 경우 별칭으로 치환
-    alias = {_norm(k): v for k, v in _NAME_ALIASES.items()}.get(_norm(clean))
-    if alias:
-        clean = alias
+    clean = display_course_name(course_name)  # 학기코드·분반 제거 + 별칭 치환(공용)
     target = _norm(clean)
     tf = _term_folder(course_name)
 
@@ -101,6 +110,83 @@ def resolve_course_dir(course_name: str, base: str) -> tuple[Path, str]:
     if tf:
         return base_p / tf / _safe(clean), "computed"
     return base_p / _safe(clean), "computed"
+
+
+# 영상 등 받기 싫을 수 있는 큰 미디어 확장자 (skip_video=True 시 제외 대상)
+VIDEO_EXTS = {
+    ".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm",
+    ".m4v", ".mpg", ".mpeg", ".ts", ".m2ts", ".vob", ".ogv",
+}
+
+
+def _ext(name: str) -> str:
+    """파일명에서 소문자 확장자(점 포함)를 반환한다. 없으면 ''."""
+    return Path(name).suffix.lower()
+
+
+def _norm_exts(exts: Optional[list[str]]) -> Optional[set[str]]:
+    """확장자 목록을 정규화한다('mp4'·'.MP4' -> '.mp4'). None 이면 None."""
+    if exts is None:
+        return None
+    out = set()
+    for e in exts:
+        e = (e or "").strip().lower()
+        if not e:
+            continue
+        out.add(e if e.startswith(".") else "." + e)
+    return out
+
+
+def _passes_filter(
+    f,
+    target: Path,
+    *,
+    include_ext: Optional[set[str]],
+    exclude_ext: Optional[set[str]],
+    max_size_mb: Optional[float],
+    skip_video: bool,
+    only_ids: Optional[set[int]],
+    exclude_ids: Optional[set[int]],
+) -> bool:
+    """파일이 싱크 대상에 포함되는지 판정한다(취사선택 필터).
+
+    only_ids 가 주어지면 그 목록만이 유일한 기준이다(명시 선택 우선).
+    그 외에는 exclude_ids → skip_video → include/exclude_ext → max_size 순으로 거른다.
+    """
+    fid = getattr(f, "id", None)
+    if only_ids is not None:
+        return fid in only_ids
+    if exclude_ids and fid in exclude_ids:
+        return False
+    ext = _ext(target.name)
+    if skip_video and ext in VIDEO_EXTS:
+        return False
+    if include_ext is not None and ext not in include_ext:
+        return False
+    if exclude_ext and ext in exclude_ext:
+        return False
+    if max_size_mb is not None:
+        size = getattr(f, "size", None)
+        if size is not None and size > max_size_mb * 1024 * 1024:
+            return False
+    return True
+
+
+def _file_info(f, target: Path, root: Path, selected: bool) -> dict:
+    """미리보기/리포트용 파일 메타데이터."""
+    size = getattr(f, "size", None)
+    try:
+        rel = str(target.relative_to(root))
+    except ValueError:
+        rel = target.name
+    return {
+        "id": getattr(f, "id", None),
+        "name": target.name,
+        "rel_path": rel,
+        "ext": _ext(target.name),
+        "size_mb": round(size / 1024 / 1024, 1) if size else None,
+        "selected": selected,
+    }
 
 
 def _course_targets(course_id: int, base: Optional[str]):
@@ -159,22 +245,56 @@ def download_course_files(
     dest_dir: Optional[str] = None,
     overwrite: bool = False,
     dry_run: bool = False,
+    skip_video: bool = False,
+    include_ext: Optional[list[str]] = None,
+    exclude_ext: Optional[list[str]] = None,
+    max_size_mb: Optional[float] = None,
+    only_file_ids: Optional[list[int]] = None,
+    exclude_file_ids: Optional[list[int]] = None,
 ) -> dict:
     """강의 자료를 의예과 폴더 구조(<base>/<학기>/<과목명>/)에 맞춰 다운로드한다.
 
     dest_dir 로 base 를 바꿀 수 있다(생략 시 ETL_DOWNLOAD_DIR 또는 SNU_BASE).
-    dry_run=True 면 다운로드 없이 결정된 경로와 파일 수만 반환한다.
     같은 크기 파일이 이미 있으면 건너뛴다(증분).
+
+    취사선택(어떤 파일을 받을지) 필터:
+      - skip_video: 영상 확장자(mp4·mov 등)를 제외.
+      - include_ext: 이 확장자만 받는다(예 ['pdf','pptx']). '.' 유무 무관.
+      - exclude_ext: 이 확장자는 제외.
+      - max_size_mb: 이 용량(MB)을 넘는 파일은 제외(영상 등 대용량 차단에 유용).
+      - only_file_ids: 이 파일 id 만 받는다(콕 집어 선택, 다른 필터 무시).
+      - exclude_file_ids: 이 파일 id 는 제외.
+    파일 id·크기는 dry_run=True 나 list_files 로 미리 확인할 수 있다.
+
+    dry_run=True 면 다운로드 없이 결정된 경로와 파일 목록(필터 적용 결과 selected
+    표시)을 반환하므로, 무엇을 받을지 사용자에게 보여주고 고르게 할 수 있다.
     """
     course, course_name, root, how, targets = _course_targets(course_id, dest_dir)
+
+    inc = _norm_exts(include_ext)
+    exc = _norm_exts(exclude_ext)
+    only_ids = set(only_file_ids) if only_file_ids is not None else None
+    excl_ids = set(exclude_file_ids) if exclude_file_ids else None
+
+    selected, excluded = [], []
+    for f, target in targets:
+        ok = _passes_filter(
+            f, target, include_ext=inc, exclude_ext=exc, max_size_mb=max_size_mb,
+            skip_video=skip_video, only_ids=only_ids, exclude_ids=excl_ids,
+        )
+        (selected if ok else excluded).append((f, target))
+
     if dry_run:
+        files = [_file_info(f, t, root, True) for f, t in selected]
+        files += [_file_info(f, t, root, False) for f, t in excluded]
         return {
-            "course": course_name, "resolved_dir": str(root),
-            "match": how, "file_count": len(targets),
+            "course": course_name, "resolved_dir": str(root), "match": how,
+            "selected": len(selected), "excluded": len(excluded),
+            "files": files,
         }
 
     downloaded, skipped, errors = [], [], []
-    for f, target in targets:
+    for f, target in selected:
         target.parent.mkdir(parents=True, exist_ok=True)
         size = getattr(f, "size", None)
         if target.exists() and not overwrite and (
@@ -190,7 +310,8 @@ def download_course_files(
 
     return {
         "course": course_name, "resolved_dir": str(root), "match": how,
-        "downloaded": len(downloaded), "skipped": len(skipped), "errors": errors,
+        "downloaded": len(downloaded), "skipped": len(skipped),
+        "excluded_by_filter": len(excluded), "errors": errors,
     }
 
 
