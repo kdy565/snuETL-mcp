@@ -296,16 +296,22 @@ def get_lecture_transcript(
     item_id: int,
     languages: list[str] | None = None,
     timestamps: bool = False,
+    stt: bool = True,
+    whisper_model: str | None = None,
+    force: bool = False,
 ) -> dict:
     """eTL 영상 강의 1개(item_id)의 대본(자막)과 메타데이터를 반환한다.
 
     item_id 는 list_lecture_videos 의 attendance_item_id(또는 Canvas 모듈항목 id)다.
-    출처가 유튜브면 유튜브 자막(자동 생성 포함)을 가져온다 — 별도 음성인식 불필요.
-    languages 는 선호 언어 순서(기본 ['ko','en']), timestamps=True 면 세그먼트별 시작시각도
-    함께 준다. 유튜브가 아니거나 자막이 없으면 transcript=None 과 note 로 사유를 알린다.
+    출처가 유튜브면 유튜브 자막(자동 생성 포함)을 바로 가져오고, 네이티브 LCMS 영상이면
+    실제 MP4 에서 오디오만 뽑아 Whisper(STT)로 전사한다(stt=False 면 전사 생략하고 안내만).
+    languages 선호 순서(기본 ['ko','en']; STT 는 languages[0]), timestamps=True 면 세그먼트별
+    시각도 준다. whisper_model 로 모델 변경, force=True 면 캐시 무시 재전사. STT 는 영상당
+    수 분이 걸리며(슬라이드 강의는 large-v3-turbo로 ~실시간의 8~10배 속도) 결과는 캐시된다.
     """
     return video.get_lecture_transcript(
-        course_id, item_id, languages=languages, timestamps=timestamps
+        course_id, item_id, languages=languages, timestamps=timestamps,
+        stt=stt, whisper_model=whisper_model, force=force,
     )
 
 
@@ -320,6 +326,27 @@ def get_youtube_transcript(
     timestamps=True 면 세그먼트별 시작시각도 함께 준다.
     """
     return video.get_youtube_transcript(url, languages=languages, timestamps=timestamps)
+
+
+@mcp.tool()
+def get_lcms_transcript(
+    em_url_or_id: str,
+    languages: list[str] | None = None,
+    timestamps: bool = False,
+    stt: bool = True,
+    whisper_model: str | None = None,
+    force: bool = False,
+) -> dict:
+    """SNU LCMS 영상(lcms.snu.ac.kr/em/{id} 링크 또는 content_id)의 대본을 반환한다(범용).
+
+    eTL 강의 항목이 아니라 공지·모듈 본문에 박힌 LCMS em 링크를 바로 처리할 때 쓴다(예:
+    출결 미반영 동영상). 유튜브 출처면 자막을, 네이티브 MP4면 ffmpeg+Whisper STT 로 전사한다.
+    stt/whisper_model/force/timestamps 동작은 get_lecture_transcript 과 동일하며 결과는 캐시된다.
+    """
+    return video.get_lcms_transcript(
+        em_url_or_id, languages=languages, timestamps=timestamps,
+        stt=stt, whisper_model=whisper_model, force=force,
+    )
 
 
 # --- 일정 (Schedule) — 목표 1 지원 -------------------------------------------
