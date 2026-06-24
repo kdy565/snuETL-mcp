@@ -14,6 +14,7 @@ import materials
 import openboard
 import schedule
 import store
+import video
 
 mcp = FastMCP("snu-etl")
 
@@ -271,6 +272,54 @@ def organize_course_files(
     return materials.organize_course_files(
         course_id, dest_dir=dest_dir, mapping=mapping, dry_run=dry_run
     )
+
+
+# --- 영상 강의 대본 (Video transcript) ---------------------------------------
+
+
+@mcp.tool()
+def list_lecture_videos(course_id: int, resolve_source: bool = True) -> list[dict]:
+    """특정 강의(course_id)의 영상 강의(lecture_attendance) 목록을 주차·차시 순으로 반환한다.
+
+    eTL 영상은 Canvas 파일이 아니라 LearningX LTI(lecture_attendance) 항목이라 list_files
+    로는 안 잡힌다. 이 도구가 LTI 런치를 거쳐 영상 항목을 가져오고, 각 항목의
+    attendance_item_id(get_lecture_transcript 에 넘기는 id)·제목·길이와 실제 출처
+    (youtube_url/video_id, source_type)를 해석해 준다. SNU 로그인 불필요.
+    resolve_source=False 면 LCMS 출처 해석을 생략해 더 빠르다.
+    """
+    return video.list_lecture_videos(course_id, resolve_source=resolve_source)
+
+
+@mcp.tool()
+def get_lecture_transcript(
+    course_id: int,
+    item_id: int,
+    languages: list[str] | None = None,
+    timestamps: bool = False,
+) -> dict:
+    """eTL 영상 강의 1개(item_id)의 대본(자막)과 메타데이터를 반환한다.
+
+    item_id 는 list_lecture_videos 의 attendance_item_id(또는 Canvas 모듈항목 id)다.
+    출처가 유튜브면 유튜브 자막(자동 생성 포함)을 가져온다 — 별도 음성인식 불필요.
+    languages 는 선호 언어 순서(기본 ['ko','en']), timestamps=True 면 세그먼트별 시작시각도
+    함께 준다. 유튜브가 아니거나 자막이 없으면 transcript=None 과 note 로 사유를 알린다.
+    """
+    return video.get_lecture_transcript(
+        course_id, item_id, languages=languages, timestamps=timestamps
+    )
+
+
+@mcp.tool()
+def get_youtube_transcript(
+    url: str, languages: list[str] | None = None, timestamps: bool = False
+) -> dict:
+    """공개 유튜브 영상의 대본(자막)을 반환한다 (교수가 직접 올린 링크 등 범용).
+
+    url 은 유튜브 주소 또는 11자 영상ID. eTL 강의 항목이 아니라 본문/공지에 박힌 외부
+    유튜브 링크를 바로 처리할 때 쓴다. languages 선호 순서(기본 ['ko','en']),
+    timestamps=True 면 세그먼트별 시작시각도 함께 준다.
+    """
+    return video.get_youtube_transcript(url, languages=languages, timestamps=timestamps)
 
 
 # --- 일정 (Schedule) — 목표 1 지원 -------------------------------------------

@@ -1,3 +1,4 @@
 mcp[cli]>=1.27
 canvasapi>=3.6
 python-dotenv>=1.0
+youtube-transcript-api>=1.2

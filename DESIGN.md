@@ -50,6 +50,9 @@ snuETL-mcp/
 | `list_files(course_id)` | 파일 목록 | ✅ |
 | `get_syllabus(course_id)` | 강의계획서 | ➕ 추가 |
 | `list_modules(course_id)` | 주차별 구조 | ➕ 추가 |
+| `list_lecture_videos(course_id)` | 영상 강의 목록(+유튜브 출처 해석) | ✅ |
+| `get_lecture_transcript(course_id, item_id)` | 영상 강의 대본(유튜브 자막) | ✅ |
+| `get_youtube_transcript(url)` | 공개 유튜브 링크 대본(범용) | ✅ |
 | `list_quizzes(course_id)` | 퀴즈/시험 | ➕ 추가 |
 | `get_submissions(course_id)` | 내 점수·피드백 | ➕ 추가 |
 | `list_messages` | Inbox 대화 | ➕ 추가 |

@@ -12,6 +12,8 @@ SNU eTL(Canvas LMS)을 MCP 도구로 노출하는 Python MCP 서버. 강의·과
 | `canvas_client.py` | Canvas 인증 + raw 조회 → dict 변환 |
 | `store.py` | SQLite 누적 저장소 (courses/announcements/assignments + change_history) |
 | `materials.py` | 강의 자료 다운로드(폴더 구조 매핑) + 강의록/과제물 정리 |
+| `openboard.py` | 열린게시판(LearningX LTI) 글/댓글 조회 |
+| `video.py` | 영상 강의(LearningX→LCMS→유튜브) 대본 추출 |
 | `sync_job.py` | 자동 동기화 잡 (cron 실행, 결과를 `store/sync.log`에 누적) |
 | `DESIGN.md` | 설계 문서 |
 
@@ -52,6 +54,8 @@ claude mcp add snu-etl -- /abs/path/.venv/bin/python /abs/path/server.py
   `get_stored_courses`, `get_stored_announcements`, `get_stored_assignments`,
   `get_change_history`
 - **강의 자료**: `download_course_files`(과제 첨부 포함), `organize_course_files`
+- **영상 대본**: `list_lecture_videos`, `get_lecture_transcript`(eTL 영상→유튜브 자막),
+  `get_youtube_transcript`(공개 유튜브 링크 범용)
 
 ## 자동 실행
 
